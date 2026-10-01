@@ -90,7 +90,14 @@ def fetch_amazon_deals():
 
     try:
         # impersonate="chrome120" Amazon 503 bot engelini aşar
-        response = requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
+        response = std_requests.get(
+    "https://api.zenrows.com/v1/",
+    params={
+        "apikey": ZENROWS_API_KEY,
+        "url": url
+    },
+    timeout=60
+)
         print(f"Amazon Yanıt Kodu: {response.status_code}")
         print("HTML uzunluğu:", len(response.text))
         print("Arama sonucu div sayısı:", response.text.count('data-component-type="s-search-result"'))
