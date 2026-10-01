@@ -11,17 +11,12 @@ CHAT_ID = "@firsatanlik"
 DB_NAME = "firsat_anlik.db"
 
 MAX_DAILY_POSTS = 12
-MIN_DISCOUNT_PERCENT = 20
-MIN_PRICE_DROP_TL = 50
 # =============================================================
 
-# Amazon Bot Engeli Aşma Başlıkları
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Cache-Control": "max-age=0",
-    "Upgrade-Insecure-Requests": "1"
 }
 
 def init_db():
@@ -80,8 +75,9 @@ def record_posted_deal(deal_id, title, price):
     conn.close()
 
 def fetch_amazon_deals():
-    """Amazon TR günün fırsatları sayfasını tarar."""
-    url = "https://www.amazon.com.tr/gp/goldbox"
+    """Amazon TR Statik İndirim/Fırsat Aramasından Ürün Çeker."""
+    # Statik arama URL'si (İndirimli ürünler filtresi uygulanmış)
+    url = "https://www.amazon.com.tr/s?k=f%C3%BCrsa&rh=p_n_specials_match%3A21618252031"
     deals = []
     
     try:
@@ -91,12 +87,12 @@ def fetch_amazon_deals():
 
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
-            # Fırsat kartlarını bul
-            items = soup.find_all("div", {"data-component-type": "s-search-result"}) or soup.find_all("div", {"class": "a-cardui"})
+            # Statik arama sonuç kartları
+            items = soup.find_all("div", {"data-component-type": "s-search-result"})
             
-            for item in items[:15]:
+            for item in items:
                 try:
-                    title_elem = item.find("span", {"class": "a-size-base-plus"}) or item.find("h2")
+                    title_elem = item.find("h2") or item.find("span", {"class": "a-size-medium"}) or item.find("span", {"class": "a-size-base-plus"})
                     price_elem = item.find("span", {"class": "a-price-whole"})
                     link_elem = item.find("a", {"class": "a-link-normal"})
 
@@ -104,21 +100,29 @@ def fetch_amazon_deals():
                         title = title_elem.text.strip()
                         price_str = price_elem.text.replace(".", "").replace(",", ".").strip()
                         price = float(re.sub(r"[^\d.]", "", price_str))
-                        old_price = round(price * 1.25, 2)
+                        
+                        # Üstü çizili eski fiyat var mı kontrol et
+                        old_price_elem = item.find("span", {"class": "a-price", "data-a-strike": "true"})
+                        if old_price_elem:
+                            old_price_str = old_price_elem.find("span", {"class": "a-offscreen"})
+                            if old_price_str:
+                                old_price = float(re.sub(r"[^\d.]", "", old_price_str.text.replace(".", "").replace(",", ".")))
+                            else:
+                                old_price = round(price * 1.25, 2)
+                        else:
+                            old_price = round(price * 1.25, 2)
 
                         href = link_elem.get("href", "")
                         link = f"https://www.amazon.com.tr{href}" if href.startswith("/") else href
+                        
                         asin_match = re.search(r"/dp/([A-Z0-9]{10})", link)
                         deal_id = asin_match.group(1) if asin_match else f"AMZ_{hash(title)}"
 
                         deals.append({
                             "id": deal_id,
-                            "deal_type": "PRICE_DROP",
                             "title": title,
                             "price": price,
                             "old_price": old_price,
-                            "is_prime": True,
-                            "is_lowest_30d": True,
                             "link": link
                         })
                 except Exception:
@@ -159,7 +163,7 @@ def run_bot():
     init_db()
 
     if not can_post_today():
-        print(f"Günlük maksimum paylaşım limitine ulaşıldı.")
+        print("Günlük maksimum paylaşım limitine ulaşıldı.")
         return
 
     deals = fetch_amazon_deals()
@@ -168,6 +172,7 @@ def run_bot():
     for deal in deals:
         deal_id = deal["id"]
         if is_already_posted(deal_id):
+            print(f"Atlandı (Zaten Paylaşıldı): {deal_id}")
             continue
 
         success = send_telegram_deal(deal)
