@@ -93,9 +93,11 @@ def fetch_amazon_deals():
         response = std_requests.get(
     "https://api.zenrows.com/v1/",
     params={
-        "apikey": ZENROWS_API_KEY,
-        "url": url
-    },
+    "apikey": ZENROWS_API_KEY,
+    "url": url,
+    "js_render": "true",
+    "premium_proxy": "true"
+},
     timeout=60
 )
         print(f"Amazon Yanıt Kodu: {response.status_code}")
