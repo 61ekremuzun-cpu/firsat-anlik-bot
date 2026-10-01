@@ -3,7 +3,7 @@ name: Fırsat Anlık Otomatik Tarayıcı
 on:
   schedule:
     # UTC zamanına göre her 30 dakikada bir çalışır
-    - cron: '*/30 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch: # GitHub arayüzünden elle tetikleme butonu
 
 jobs:
