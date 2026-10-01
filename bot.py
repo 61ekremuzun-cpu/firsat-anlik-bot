@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 
 # ==================== GENEL KONFİGÜRASYON ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8895615416:AAFtkMt1OyNOMTnv2P2gYXJ_PxmoQa11TxA")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = "@firsatanlik"
 DB_NAME = "firsat_anlik.db"
 
