@@ -1,7 +1,8 @@
 import os
 import re
 import sqlite3
-import requests
+import requests as std_requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -12,12 +13,6 @@ DB_NAME = "firsat_anlik.db"
 
 MAX_DAILY_POSTS = 12
 # =============================================================
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-}
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -75,19 +70,30 @@ def record_posted_deal(deal_id, title, price):
     conn.close()
 
 def fetch_amazon_deals():
-    """Amazon TR Statik İndirim/Fırsat Aramasından Ürün Çeker."""
-    # Statik arama URL'si (İndirimli ürünler filtresi uygulanmış)
-    url = "https://www.amazon.com.tr/s?k=f%C3%BCrsa&rh=p_n_specials_match%3A21618252031"
+    """Chrome TLS Parmak izi taklidi ile Amazon TR'den veri çeker."""
+    url = "https://www.amazon.com.tr/s?k=f%C3%BCrsat&rh=p_n_specials_match%3A21618252031"
     deals = []
     
+    headers = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "accept-language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1"
+    }
+
     try:
-        session = requests.Session()
-        response = session.get(url, headers=HEADERS, timeout=15)
+        # impersonate="chrome120" Amazon 503 bot engelini aşar
+        response = requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
         print(f"Amazon Yanıt Kodu: {response.status_code}")
 
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
-            # Statik arama sonuç kartları
             items = soup.find_all("div", {"data-component-type": "s-search-result"})
             
             for item in items:
@@ -101,14 +107,10 @@ def fetch_amazon_deals():
                         price_str = price_elem.text.replace(".", "").replace(",", ".").strip()
                         price = float(re.sub(r"[^\d.]", "", price_str))
                         
-                        # Üstü çizili eski fiyat var mı kontrol et
                         old_price_elem = item.find("span", {"class": "a-price", "data-a-strike": "true"})
                         if old_price_elem:
                             old_price_str = old_price_elem.find("span", {"class": "a-offscreen"})
-                            if old_price_str:
-                                old_price = float(re.sub(r"[^\d.]", "", old_price_str.text.replace(".", "").replace(",", ".")))
-                            else:
-                                old_price = round(price * 1.25, 2)
+                            old_price = float(re.sub(r"[^\d.]", "", old_price_str.text.replace(".", "").replace(",", "."))) if old_price_str else round(price * 1.25, 2)
                         else:
                             old_price = round(price * 1.25, 2)
 
@@ -156,7 +158,8 @@ def send_telegram_deal(deal_data):
         "parse_mode": "Markdown",
         "disable_web_page_preview": False
     }
-    response = requests.post(url, json=payload).json()
+    
+    response = std_requests.post(url, json=payload).json()
     return response.get("ok", False)
 
 def run_bot():
