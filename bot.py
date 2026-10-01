@@ -9,7 +9,7 @@ from datetime import datetime
 
 
 # ============================================================
-# GENEL KONFİGÜRASYON
+# AYARLAR
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -113,40 +113,142 @@ def record_posted_deal(deal_id, title, price):
 
 
 # ============================================================
-# YARDIMCI FONKSİYONLAR
+# FİYAT YARDIMCILARI
 # ============================================================
 
-def parse_price(price_text):
-    """
-    Türkçe Amazon fiyatlarını float'a çevirir.
-
-    Örnek:
-    1.299,90 TL -> 1299.90
-    """
-
-    if not price_text:
+def parse_price(text):
+    if not text:
         return None
 
-    cleaned = price_text.strip()
+    text = str(text).strip()
+    text = text.replace("\xa0", " ")
+    text = text.replace("₺", "")
+    text = text.replace("TL", "")
+    text = text.replace(" ", "")
 
-    cleaned = cleaned.replace("₺", "")
-    cleaned = cleaned.replace("TL", "")
-    cleaned = cleaned.replace("\xa0", "")
-    cleaned = cleaned.replace(" ", "")
+    # Türkçe fiyat biçimi:
+    # 12.999,90 -> 12999.90
+    if "," in text:
+        text = text.replace(".", "")
+        text = text.replace(",", ".")
+    else:
+        # 1299.90 gibi gelirse dokunma
+        parts = text.split(".")
+        if len(parts) > 2:
+            text = "".join(parts)
 
-    # Türkiye formatı
-    cleaned = cleaned.replace(".", "")
-    cleaned = cleaned.replace(",", ".")
+    text = re.sub(r"[^\d.]", "", text)
 
-    cleaned = re.sub(r"[^\d.]", "", cleaned)
-
-    if not cleaned:
+    if not text:
         return None
 
     try:
-        return float(cleaned)
+        value = float(text)
+
+        if value <= 0:
+            return None
+
+        return value
+
     except ValueError:
         return None
+
+
+def extract_prices_from_text(text):
+    if not text:
+        return []
+
+    patterns = [
+        r"(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL",
+        r"₺\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)",
+        r"(\d+(?:,\d{2})?)\s*₺"
+    ]
+
+    prices = []
+
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+
+        for match in matches:
+            price = parse_price(match)
+
+            if price is not None:
+                prices.append(price)
+
+    return prices
+
+
+def find_price(item):
+    # 1. Amazon klasik fiyat alanları
+    selectors = [
+        "span.a-price span.a-offscreen",
+        "span.a-price-whole",
+        "span.a-color-price",
+        "span.a-offscreen",
+        "[aria-label*='TL']",
+        "[aria-label*='₺']"
+    ]
+
+    for selector in selectors:
+        elements = item.select(selector)
+
+        for element in elements:
+            possible_values = [
+                element.get_text(" ", strip=True),
+                element.get("aria-label"),
+                element.get("data-a-color")
+            ]
+
+            for value in possible_values:
+                price = parse_price(value)
+
+                if price:
+                    return price
+
+    # 2. Kartın bütün metninden fiyat ara
+    card_text = item.get_text(" ", strip=True)
+
+    prices = extract_prices_from_text(card_text)
+
+    if prices:
+        # Genellikle kartta görünen ilk fiyat güncel fiyattır
+        return prices[0]
+
+    return None
+
+
+def find_old_price(item, current_price):
+    selectors = [
+        "span.a-price[data-a-strike='true'] span.a-offscreen",
+        "span.a-text-price span.a-offscreen",
+        "span.a-price.a-text-price span.a-offscreen"
+    ]
+
+    for selector in selectors:
+        elements = item.select(selector)
+
+        for element in elements:
+            old_price = parse_price(
+                element.get_text(" ", strip=True)
+            )
+
+            if old_price and old_price > current_price:
+                return old_price
+
+    # Kart içindeki tüm fiyatlara bak
+    card_text = item.get_text(" ", strip=True)
+
+    prices = extract_prices_from_text(card_text)
+
+    bigger_prices = [
+        p for p in prices
+        if p > current_price
+    ]
+
+    if bigger_prices:
+        return max(bigger_prices)
+
+    return None
 
 
 def absolute_amazon_link(href):
@@ -163,7 +265,7 @@ def absolute_amazon_link(href):
 
 
 # ============================================================
-# AMAZON FIRSATLARINI ÇEK
+# AMAZON
 # ============================================================
 
 def fetch_amazon_deals():
@@ -180,7 +282,6 @@ def fetch_amazon_deals():
         return deals
 
     try:
-
         response = std_requests.get(
             "https://api.zenrows.com/v1/",
             params={
@@ -189,11 +290,11 @@ def fetch_amazon_deals():
                 "js_render": "true",
                 "premium_proxy": "true"
             },
-            timeout=60
+            timeout=90
         )
 
-        print(f"Amazon Yanıt Kodu: {response.status_code}")
-        print(f"HTML uzunluğu: {len(response.text)}")
+        print("Amazon Yanıt Kodu:", response.status_code)
+        print("HTML uzunluğu:", len(response.text))
 
         if response.status_code != 200:
             print("❌ Amazon sayfası alınamadı.")
@@ -209,57 +310,27 @@ def fetch_amazon_deals():
             print(
                 "Sayfa başlığı:",
                 soup.title.get_text(
+                    " ",
                     strip=True
                 )
             )
-        else:
-            print("Sayfa başlığı bulunamadı.")
 
-        # Amazon'un yeni sonuç kartları
-        items = soup.select(
-            "div.s-result-item[data-asin]"
-        )
+        # Bütün ASIN içeren kartları bul
+        items = [
+            item
+            for item in soup.select("[data-asin]")
+            if item.get("data-asin", "").strip()
+        ]
 
-        # Alternatif yöntem
-        if not items:
-            items = [
-                item
-                for item in soup.select(
-                    "div[data-asin]"
-                )
-                if item.get("data-asin")
-            ]
+        print("Ürün kartı sayısı:", len(items))
 
-        print(
-            f"Ürün kartı sayısı: {len(items)}"
-        )
-
-        print(
-            "Fiyat alanı sayısı:",
-            len(
-                soup.select(
-                    "span.a-price "
-                    "span.a-offscreen"
-                )
-            )
-        )
-
-        print(
-            "H2 başlık sayısı:",
-            len(soup.select("h2"))
-        )
-
-        for item in items:
+        for index, item in enumerate(items, start=1):
 
             try:
-
-                asin = (
-                    item.get(
-                        "data-asin",
-                        ""
-                    )
-                    .strip()
-                )
+                asin = item.get(
+                    "data-asin",
+                    ""
+                ).strip()
 
                 if not asin:
                     continue
@@ -269,15 +340,18 @@ def fetch_amazon_deals():
                 # ----------------------------
 
                 title_elem = (
-                    item.select_one(
-                        "h2 span"
-                    )
+                    item.select_one("h2 span")
+                    or item.select_one("h2")
                     or item.select_one(
-                        "h2"
+                        "[data-cy='title-recipe'] span"
                     )
                 )
 
                 if not title_elem:
+                    print(
+                        f"⚠️ Kart {index}: "
+                        "başlık bulunamadı"
+                    )
                     continue
 
                 title = title_elem.get_text(
@@ -293,120 +367,51 @@ def fetch_amazon_deals():
                 # ----------------------------
 
                 link_elem = (
-                    item.select_one(
-                        "h2 a[href]"
-                    )
+                    item.select_one("h2 a[href]")
                     or item.select_one(
                         "a.a-link-normal[href]"
                     )
+                    or item.select_one("a[href*='/dp/']")
                 )
 
                 if not link_elem:
+                    print(
+                        f"⚠️ Kart {index}: "
+                        "link bulunamadı"
+                    )
                     continue
 
                 link = absolute_amazon_link(
                     link_elem.get("href")
                 )
 
-                if not link:
-                    continue
-
                 # ----------------------------
-                # GÜNCEL FİYAT
+                # FİYAT
                 # ----------------------------
 
-                price_elem = (
-                    item.select_one(
-                        "span.a-price "
-                        "span.a-offscreen"
-                    )
-                    or item.select_one(
-                        "span.a-color-price"
-                    )
-                )
-
-                price = None
-
-                if price_elem:
-                    price = parse_price(
-                        price_elem.get_text(
-                            strip=True
-                        )
-                    )
-
-                # Bazı Amazon kartlarında
-                # fiyat parçalara ayrılmış olabilir
-                if price is None:
-
-                    whole = item.select_one(
-                        "span.a-price-whole"
-                    )
-
-                    fraction = item.select_one(
-                        "span.a-price-fraction"
-                    )
-
-                    if whole:
-
-                        whole_text = (
-                            whole.get_text(
-                                strip=True
-                            )
-                        )
-
-                        fraction_text = (
-                            fraction.get_text(
-                                strip=True
-                            )
-                            if fraction
-                            else "00"
-                        )
-
-                        combined_price = (
-                            f"{whole_text},"
-                            f"{fraction_text}"
-                        )
-
-                        price = parse_price(
-                            combined_price
-                        )
+                price = find_price(item)
 
                 if price is None:
+                    print(
+                        f"⚠️ Kart {index}: "
+                        f"fiyat bulunamadı | {title[:70]}"
+                    )
+
+                    # Teşhis için kart metnini göster
+                    print(
+                        "Kart metni:",
+                        item.get_text(
+                            " ",
+                            strip=True
+                        )[:500]
+                    )
+
                     continue
 
-                # ----------------------------
-                # ESKİ FİYAT
-                # ----------------------------
-
-                old_price = None
-
-                old_price_elem = (
-                    item.select_one(
-                        "span.a-price"
-                        "[data-a-strike='true'] "
-                        "span.a-offscreen"
-                    )
-                    or item.select_one(
-                        "span.a-text-price "
-                        "span.a-offscreen"
-                    )
+                old_price = find_old_price(
+                    item,
+                    price
                 )
-
-                if old_price_elem:
-
-                    old_price = parse_price(
-                        old_price_elem.get_text(
-                            strip=True
-                        )
-                    )
-
-                # Güncel fiyatla aynıysa
-                # eski fiyat sayma
-                if (
-                    old_price is not None
-                    and old_price <= price
-                ):
-                    old_price = None
 
                 deals.append({
                     "id": asin,
@@ -419,142 +424,115 @@ def fetch_amazon_deals():
                 print(
                     "✅ Ürün bulundu:",
                     asin,
-                    "-",
+                    "|",
                     title[:60],
-                    "-",
-                    price
+                    "|",
+                    price,
+                    "| eski:",
+                    old_price
                 )
 
             except Exception as e:
                 print(
-                    "Ürün işleme hatası:",
+                    f"⚠️ Kart {index} hatası:",
                     str(e)
                 )
-                continue
 
     except Exception as e:
-
         print(
-            f"❌ Tarama Hatası: {e}"
+            "❌ Tarama Hatası:",
+            str(e)
         )
 
     return deals
 
 
 # ============================================================
-# TELEGRAM MESAJI
+# TELEGRAM
 # ============================================================
 
-def send_telegram_deal(deal_data):
+def send_telegram_deal(deal):
 
     if not BOT_TOKEN:
-        print(
-            "❌ BOT_TOKEN bulunamadı."
-        )
+        print("❌ BOT_TOKEN bulunamadı.")
         return False
 
-    title = deal_data.get(
-        "title",
-        "Amazon Fırsatı"
+    title = html.escape(
+        deal["title"]
     )
 
-    price = deal_data.get(
-        "price"
+    link = html.escape(
+        deal["link"]
     )
 
-    old_price = deal_data.get(
+    price = deal["price"]
+    old_price = deal.get(
         "old_price"
     )
 
-    link = deal_data.get(
-        "link"
-    )
+    if old_price and old_price > price:
 
-    safe_title = html.escape(title)
-
-    # ----------------------------
-    # İNDİRİM VARSA
-    # ----------------------------
-
-    if (
-        old_price
-        and old_price > price
-    ):
-
-        discount_percent = round(
+        discount = round(
             (
                 (old_price - price)
                 / old_price
-            )
-            * 100
+            ) * 100
         )
 
         message = (
             "⚡️ <b>FIRSAT ANLIK</b>\n\n"
-            f"📦 <b>{safe_title}</b>\n\n"
-            "📉 Fiyat düştü\n"
+            f"📦 <b>{title}</b>\n\n"
             f"❌ <s>{old_price:,.2f} TL</s>\n"
             f"✅ <b>{price:,.2f} TL</b>\n"
-            f"🔥 <b>%{discount_percent} indirim</b>\n\n"
-            f'👉 <a href="{html.escape(link)}">'
+            f"🔥 <b>%{discount} indirim</b>\n\n"
+            f'👉 <a href="{link}">'
             "Fırsata Git"
             "</a>"
         )
-
-    # ----------------------------
-    # ESKİ FİYAT YOKSA
-    # ----------------------------
 
     else:
 
         message = (
             "⚡️ <b>FIRSAT ANLIK</b>\n\n"
-            f"📦 <b>{safe_title}</b>\n\n"
+            f"📦 <b>{title}</b>\n\n"
             f"💰 <b>{price:,.2f} TL</b>\n\n"
-            f'👉 <a href="{html.escape(link)}">'
+            f'👉 <a href="{link}">'
             "Fırsata Git"
             "</a>"
         )
 
-    telegram_url = (
-        f"https://api.telegram.org/"
+    url = (
+        "https://api.telegram.org/"
         f"bot{BOT_TOKEN}/sendMessage"
     )
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
-
     try:
-
         response = std_requests.post(
-            telegram_url,
-            json=payload,
+            url,
+            json={
+                "chat_id": CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False
+            },
             timeout=30
         )
 
         result = response.json()
 
-        if result.get("ok"):
-            print(
-                "✅ Telegram mesajı gönderildi."
-            )
-            return True
-
         print(
-            "❌ Telegram hatası:",
+            "Telegram yanıtı:",
             result
         )
 
-        return False
+        return result.get(
+            "ok",
+            False
+        )
 
     except Exception as e:
-
         print(
-            "❌ Telegram bağlantı hatası:",
+            "❌ Telegram hatası:",
             str(e)
         )
 
@@ -562,7 +540,7 @@ def send_telegram_deal(deal_data):
 
 
 # ============================================================
-# BOTU ÇALIŞTIR
+# ÇALIŞTIR
 # ============================================================
 
 def run_bot():
@@ -570,44 +548,35 @@ def run_bot():
     init_db()
 
     if not can_post_today():
-
         print(
             "Günlük maksimum paylaşım "
             "limitine ulaşıldı."
         )
-
         return
 
     deals = fetch_amazon_deals()
 
     print(
-        f"Bulunan fırsat sayısı: "
-        f"{len(deals)}"
+        "Bulunan fırsat sayısı:",
+        len(deals)
     )
 
     if not deals:
-
         print(
             "Bu taramada paylaşılacak "
             "ürün bulunamadı."
         )
-
         return
 
     for deal in deals:
 
-        deal_id = deal["id"]
-
         if is_already_posted(
-            deal_id
+            deal["id"]
         ):
-
             print(
-                "Atlandı "
-                "(Zaten Paylaşıldı):",
-                deal_id
+                "Atlandı:",
+                deal["id"]
             )
-
             continue
 
         success = send_telegram_deal(
@@ -617,7 +586,7 @@ def run_bot():
         if success:
 
             record_posted_deal(
-                deal_id,
+                deal["id"],
                 deal["title"],
                 deal["price"]
             )
@@ -629,14 +598,10 @@ def run_bot():
                 deal["title"]
             )
 
-            # Her taramada şimdilik
-            # yalnızca 1 ürün paylaş
+            # Şimdilik her çalışmada
+            # yalnızca 1 paylaşım
             break
 
-
-# ============================================================
-# BAŞLAT
-# ============================================================
 
 if __name__ == "__main__":
     run_bot()
