@@ -91,7 +91,9 @@ def fetch_amazon_deals():
         # impersonate="chrome120" Amazon 503 bot engelini aşar
         response = requests.get(url, headers=headers, impersonate="chrome120", timeout=20)
         print(f"Amazon Yanıt Kodu: {response.status_code}")
-
+        print("HTML uzunluğu:", len(response.text))
+        print("Arama sonucu div sayısı:", response.text.count('data-component-type="s-search-result"'))
+        print("Sayfa başlığı:", BeautifulSoup(response.text, "html.parser").title)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
             items = soup.find_all("div", {"data-component-type": "s-search-result"})
