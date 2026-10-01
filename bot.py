@@ -8,6 +8,7 @@ from datetime import datetime
 
 # ==================== GENEL KONFİGÜRASYON ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY")
 CHAT_ID = "@firsatanlik"
 DB_NAME = "firsat_anlik.db"
 
