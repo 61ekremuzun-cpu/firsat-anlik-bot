@@ -104,6 +104,11 @@ def fetch_amazon_deals():
         print("Sayfa başlığı:", BeautifulSoup(response.text, "html.parser").title)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
+            
+            print("data-asin ürün adayı:", len(soup.select('div[data-asin]')) if 'soup' in locals() else 0)
+            print("s-result-item sayısı:", len(soup.select('div.s-result-item')) if 'soup' in locals() else 0)
+            print("Fiyat alanı sayısı:", len(soup.select('span.a-price-whole')) if 'soup' in locals() else 0)
+            print("H2 başlık sayısı:", len(soup.select('h2')) if 'soup' in locals() else 0)
             items = soup.find_all("div", {"data-component-type": "s-search-result"})
             
             for item in items:
