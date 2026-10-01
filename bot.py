@@ -166,7 +166,16 @@ def send_telegram_deal(deal_data):
 
 def run_bot():
     init_db()
-
+    
+    test_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    test_response = std_requests.post(
+        test_url,
+        json={
+            "chat_id": CHAT_ID,
+            "text": "✅ Fırsat Anlık bot test mesajı"
+        }
+    ).json()
+    print("Telegram test yanıtı:", test_response)
     if not can_post_today():
         print("Günlük maksimum paylaşım limitine ulaşıldı.")
         return
