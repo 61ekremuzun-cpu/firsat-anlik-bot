@@ -26,4 +26,5 @@ jobs:
       - name: Botu Çalıştır
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ZENROWS_API_KEY: ${{ secrets.ZENROWS_API_KEY }}
         run: python bot.py
